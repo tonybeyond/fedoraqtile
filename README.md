@@ -66,11 +66,20 @@ sudo bash /opt/fedoraqtile/scripts/post-install.sh
 
 ### Ensuite (les deux options)
 
+`qtile-setup.sh` est **enchaîné automatiquement** par post-install — il ne reste que :
+
 ```bash
-# Post-reboot, en user :
-bash /opt/fedoraqtile/scripts/qtile-setup.sh      # qtile + look DTOS
-sudo bash /opt/fedoraqtile/scripts/virt-setup.sh  # (optionnel) KVM
 sudo reboot   # → LightDM → session Qtile
+```
+
+Optionnel : `sudo bash /opt/fedoraqtile/scripts/virt-setup.sh` (KVM).
+
+### Réparation / machine existante
+
+`qtile-setup.sh` est auto-suffisant (localise le repo ou le clone lui-même, déploiement **vérifié octet par octet**, échec dur si problème) :
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/tonybeyond/fedoraqtile/main/scripts/qtile-setup.sh | bash
 ```
 
 ---
