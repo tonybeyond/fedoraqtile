@@ -6,7 +6,7 @@
 #   sudo bash /opt/fedoraqtile/scripts/post-install.sh
 #
 # Post-reboot (manuels) :
-#   bash /opt/fedoraqtile/scripts/qtile-setup.sh   (WM + look DTOS)
+#   (qtile-setup.sh est enchaîné automatiquement — plus d'étape manuelle)
 #   sudo bash /opt/fedoraqtile/scripts/virt-setup.sh
 # =============================================================================
 
@@ -225,6 +225,18 @@ else
   log_info "Citrix : placer ICAClient rpm dans ~/Downloads puis relancer (le rpm Citrix supporte RHEL/Fedora)"
 fi
 
+# ── Enchaînement automatique : qtile-setup ───────────────────────────────────
+# Plus d'étape manuelle : le setup qtile (paquets + configs style DTOS) est
+# lancé directement ici. Il gère lui-même la bascule root→user pour les configs.
+log_section "Enchaînement : qtile-setup.sh"
+if [[ -f "${REPO_DIR}/scripts/qtile-setup.sh" ]]; then
+  bash "${REPO_DIR}/scripts/qtile-setup.sh" \
+    && log_ok "qtile-setup terminé" \
+    || log_error "qtile-setup a échoué — relancer : sudo bash ${REPO_DIR}/scripts/qtile-setup.sh"
+else
+  log_warn "qtile-setup.sh introuvable dans ${REPO_DIR}/scripts/"
+fi
+
 # ── Résumé ────────────────────────────────────────────────────────────────────
 echo ""
 echo "╔════════════════════════════════════════════════════════════╗"
@@ -232,7 +244,7 @@ echo "║  fedoraqtile post-install — TERMINÉ                        ║"
 printf "║  Erreurs : %-3d                                             ║\n" "${ERROR_COUNT}"
 echo "╠════════════════════════════════════════════════════════════╣"
 echo "║  Post-reboot :                                             ║"
-echo "║  1. bash /opt/fedoraqtile/scripts/qtile-setup.sh           ║"
+echo "║  qtile : configuré automatiquement ✓                       ║"
 echo "║  2. sudo bash /opt/fedoraqtile/scripts/virt-setup.sh       ║"
 echo "╚════════════════════════════════════════════════════════════╝"
 exit 0
