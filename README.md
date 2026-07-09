@@ -52,7 +52,7 @@ echo "tonpass" | openssl passwd -6 -stdin
 #    inst.ks=https://raw.githubusercontent.com/tonybeyond/fedoraqtile/main/kickstart/ks.cfg
 #    (au menu GRUB : touche 'e', ajouter à la ligne linux, Ctrl+X)
 ```
-L'installation est entièrement automatique (partitionnement Btrfs, user deby, minimal) et lance `post-install.sh` en fin d'install.
+L'installation est entièrement automatique (partitionnement Btrfs, user fedo, minimal) et lance `post-install.sh` en fin d'install.
 
 ### Option B — Manuelle (5 clics)
 
