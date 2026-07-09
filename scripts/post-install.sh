@@ -12,7 +12,7 @@
 
 set -uo pipefail   # PAS de -e : best-effort
 
-TARGET_USER="${SUDO_USER:-deby}"
+TARGET_USER="${SUDO_USER:-fedo}"
 TARGET_HOME=$(getent passwd "${TARGET_USER}" 2>/dev/null | cut -d: -f6 || echo "/home/${TARGET_USER}")
 REPO_DIR="/opt/fedoraqtile"
 LOG_FILE="/var/log/fedoraqtile-setup.log"
