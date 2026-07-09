@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 # =============================================================================
-# qtile-setup.sh — Qtile (X11) + look DTOS sur Fedora
+# qtile-setup.sh — Qtile X11 style DTOS (Fedora) — v2 robuste
 # =============================================================================
-# Installe qtile depuis les repos Fedora (session X11), LightDM, et déploie
-# la config style DTOS (Doom One, barre widgets, rofi, picom).
-# Clavier Swiss French (ch/fr) forcé dans l'autostart X11.
+# AUTO-SUFFISANT : trouve le repo où qu'il soit, ou le clone lui-même.
+# Utilisable de 3 façons, toutes équivalentes :
+#   sudo bash /opt/fedoraqtile/scripts/qtile-setup.sh
+#   bash ~/fedoraqtile/scripts/qtile-setup.sh
+#   curl -fsSL https://raw.githubusercontent.com/tonybeyond/fedoraqtile/main/scripts/qtile-setup.sh | bash
 #
-# Lancer SANS sudo :
-#   bash /opt/fedoraqtile/scripts/qtile-setup.sh
+# Lancé root : installe les paquets puis bascule en user pour les configs.
+# Lancé user : sudo pour les paquets, direct pour les configs.
+# ÉCHEC DUR si le déploiement des configs ne peut pas être vérifié.
 # =============================================================================
 
 set -uo pipefail
@@ -19,125 +22,190 @@ log_ok()      { printf "${GREEN}  ✓${NC}  %s\n" "$*"; }
 log_warn()    { printf "${YELLOW}  ⚠${NC}  %s\n" "$*"; }
 log_error()   { printf "${RED}  ✗${NC}  %s\n" "$*" >&2; }
 log_section() { printf "\n${BOLD}── %s ──${NC}\n" "$*"; }
+die()         { log_error "$*"; exit 1; }
 
-[[ $EUID -ne 0 ]] || { echo "Lancer SANS sudo."; exit 1; }
-REPO_DIR="/opt/fedoraqtile"
+REPO_URL="https://github.com/tonybeyond/fedoraqtile.git"
 
-# ── 1. Paquets (qtile X11 + écosystème DTOS) ─────────────────────────────────
-log_section "Installation qtile + écosystème"
-sudo dnf install -y \
+# ── Déterminer l'utilisateur cible et le mode ─────────────────────────────────
+if [[ $EUID -eq 0 ]]; then
+  TARGET_USER="${SUDO_USER:-$(logname 2>/dev/null || echo '')}"
+  [[ -n "${TARGET_USER}" && "${TARGET_USER}" != "root" ]] \
+    || die "Impossible de déterminer l'utilisateur cible. Lancer : sudo bash $0"
+  RUN_AS_ROOT=true
+else
+  TARGET_USER="${USER}"
+  RUN_AS_ROOT=false
+fi
+TARGET_HOME=$(getent passwd "${TARGET_USER}" | cut -d: -f6)
+log_info "Utilisateur cible : ${TARGET_USER} (${TARGET_HOME})"
+
+# ── Résolution du repo : script dir → /opt → ~ → clone auto ──────────────────
+log_section "Localisation du repo fedoraqtile"
+REPO_DIR=""
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-/dev/null}")" 2>/dev/null && pwd || echo '')"
+
+for candidate in \
+  "${SCRIPT_DIR}/.." \
+  "/opt/fedoraqtile" \
+  "${TARGET_HOME}/fedoraqtile" \
+  "${TARGET_HOME}/Downloads/fedoraqtile"; do
+  if [[ -f "${candidate}/configs/qtile/config.py" ]]; then
+    REPO_DIR="$(cd "${candidate}" && pwd)"
+    log_ok "Repo trouvé : ${REPO_DIR}"
+    break
+  fi
+done
+
+if [[ -z "${REPO_DIR}" ]]; then
+  log_info "Repo introuvable localement — clone automatique..."
+  REPO_DIR="/tmp/fedoraqtile-setup-$$"
+  git clone --depth 1 "${REPO_URL}" "${REPO_DIR}" 2>/dev/null \
+    || die "Clone échoué. Vérifier réseau + git : sudo dnf install -y git"
+  log_ok "Repo cloné : ${REPO_DIR}"
+fi
+
+# Vérification d'intégrité du repo AVANT toute action
+for required in configs/qtile/config.py configs/qtile/autostart.sh \
+                configs/picom/picom.conf configs/rofi/config.rasi \
+                configs/dunst/dunstrc configs/alacritty/alacritty.toml; do
+  [[ -f "${REPO_DIR}/${required}" ]] \
+    || die "Fichier manquant dans le repo : ${required} — repo corrompu, re-cloner."
+done
+log_ok "Intégrité du repo vérifiée (6 configs présentes)"
+
+# ── 1. Paquets (root ou sudo) ────────────────────────────────────────────────
+log_section "Installation des paquets"
+DNF="dnf"; [[ "${RUN_AS_ROOT}" == false ]] && DNF="sudo dnf"
+
+${DNF} install -y \
   qtile python3-dbus-next \
   xorg-x11-server-Xorg xorg-x11-xinit xrandr xsetroot setxkbmap \
   lightdm lightdm-gtk-greeter \
-  picom rofi nitrogen \
+  picom rofi nitrogen dunst \
   thunar thunar-volman gvfs \
   xsecurelock xkill alacritty \
-  network-manager-applet pavucontrol playerctl brightnessctl \
-  flameshot dunst \
-  google-noto-emoji-color-fonts \
-  || log_warn "Certains paquets ont échoué — vérifier dnf"
-
+  network-manager-applet \
+  flameshot xclip playerctl brightnessctl pavucontrol \
+  papirus-icon-theme lxappearance \
+  git curl unzip \
+  || die "dnf install a échoué — vérifier le réseau/repos"
 log_ok "Paquets installés"
 
-# ── 2. Configs (qtile, picom, rofi) ──────────────────────────────────────────
-log_section "Déploiement des configs (style DTOS)"
-QTILE_DIR="${HOME}/.config/qtile"
-PICOM_DIR="${HOME}/.config/picom"
-ROFI_DIR="${HOME}/.config/rofi"
-mkdir -p "${QTILE_DIR}" "${PICOM_DIR}" "${ROFI_DIR}"
-
-# Backup
-[[ -f "${QTILE_DIR}/config.py" ]] && \
-  cp "${QTILE_DIR}/config.py" "${QTILE_DIR}/config.py.bak-$(date +%Y%m%d-%H%M%S)"
-
-cp "${REPO_DIR}/configs/qtile/config.py"     "${QTILE_DIR}/config.py"
-cp "${REPO_DIR}/configs/qtile/autostart.sh"  "${QTILE_DIR}/autostart.sh"
-chmod +x "${QTILE_DIR}/autostart.sh"
-cp "${REPO_DIR}/configs/picom/picom.conf"    "${PICOM_DIR}/picom.conf"
-cp "${REPO_DIR}/configs/rofi/config.rasi"    "${ROFI_DIR}/config.rasi"
-mkdir -p "${HOME}/.config/dunst" "${HOME}/.config/alacritty"
-cp "${REPO_DIR}/configs/dunst/dunstrc"           "${HOME}/.config/dunst/dunstrc" 2>/dev/null || true
-cp "${REPO_DIR}/configs/alacritty/alacritty.toml" "${HOME}/.config/alacritty/alacritty.toml" 2>/dev/null || true
-log_ok "Configs qtile + picom + rofi + dunst + alacritty déployées"
-
-# Police Mononoki Nerd Font (DTOS) — requise par config.py et la barre
-FONT_DIR="${HOME}/.local/share/fonts/MononokiNerdFont"
-if [[ ! -d "${FONT_DIR}" ]]; then
-  mkdir -p "${FONT_DIR}"
-  curl -fLo /tmp/Mononoki.zip \
-    https://github.com/ryanoasis/nerd-fonts/releases/latest/download/Mononoki.zip 2>/dev/null \
-    && unzip -o /tmp/Mononoki.zip -d "${FONT_DIR}" >/dev/null \
-    && rm -f /tmp/Mononoki.zip && fc-cache -f >/dev/null \
-    && log_ok "Mononoki Nerd Font (DTOS)" || log_warn "Mononoki NF échoué"
-fi
-
-# ── 3. Session X11 + LightDM ──────────────────────────────────────────────────
-log_section "Session graphique (LightDM + qtile X11)"
-# Le paquet Fedora qtile fournit /usr/share/xsessions/qtile.desktop
-if [[ -f /usr/share/xsessions/qtile.desktop ]]; then
-  log_ok "Session qtile (X11) disponible dans LightDM"
+# Session graphique
+if [[ "${RUN_AS_ROOT}" == true ]]; then
+  systemctl set-default graphical.target &>/dev/null
+  systemctl enable lightdm &>/dev/null
 else
-  log_warn "qtile.desktop absent — création manuelle"
-  sudo tee /usr/share/xsessions/qtile.desktop > /dev/null << 'DESKTOP'
-[Desktop Entry]
-Name=Qtile
-Comment=Qtile Tiling Window Manager
-Exec=qtile start
-Type=Application
-DESKTOP
+  sudo systemctl set-default graphical.target &>/dev/null
+  sudo systemctl enable lightdm &>/dev/null
 fi
+log_ok "LightDM activé, boot graphique"
 
-sudo systemctl enable lightdm 2>/dev/null && log_ok "LightDM activé" || true
-sudo systemctl set-default graphical.target 2>/dev/null \
-  && log_ok "Boot en mode graphique" || true
+# Clavier X11 persistant
+if [[ "${RUN_AS_ROOT}" == true ]]; then
+  localectl set-x11-keymap ch pc105 fr 2>/dev/null || true
+else
+  sudo localectl set-x11-keymap ch pc105 fr 2>/dev/null || true
+fi
+log_ok "Keymap X11 : ch (fr)"
 
-# ── 4. Clavier ch/fr — toutes les couches ─────────────────────────────────────
-log_section "Clavier Swiss French"
-sudo localectl set-x11-keymap ch pc105 fr 2>/dev/null \
-  && log_ok "X11 keymap : ch (fr) — persistant" || true
-# L'autostart.sh de qtile fait aussi setxkbmap ch fr à chaque session (ceinture+bretelles)
-log_ok "setxkbmap ch fr dans l'autostart qtile"
+# ── 2. Partie utilisateur : configs + fonts + validation ─────────────────────
+# Fonction exécutée en tant que TARGET_USER (jamais root)
+deploy_user_configs() {
+  local repo="$1"
+  local fail=0
 
-# ── 5. Validation config qtile ────────────────────────────────────────────────
-log_section "Validation"
-if python3 -c "
-import sys
-sys.path.insert(0, '${QTILE_DIR}')
+  # deploy <src-rel> <dst-abs> : copie + VÉRIFIE par comparaison binaire
+  deploy() {
+    local src="${repo}/$1" dst="$2"
+    mkdir -p "$(dirname "${dst}")"
+    [[ -f "${dst}" && "$3" == "backup" ]] \
+      && cp "${dst}" "${dst}.bak-$(date +%Y%m%d-%H%M%S)"
+    cp "${src}" "${dst}" 2>/dev/null
+    if cmp -s "${src}" "${dst}"; then
+      printf "  \033[0;32m✓\033[0m  %s (%s bytes)\n" "$2" "$(wc -c < "${dst}")"
+    else
+      printf "  \033[0;31m✗\033[0m  ÉCHEC déploiement : %s\n" "$2" >&2
+      fail=1
+    fi
+  }
+
+  deploy configs/qtile/config.py        "${HOME}/.config/qtile/config.py"        backup
+  deploy configs/qtile/autostart.sh     "${HOME}/.config/qtile/autostart.sh"     nobackup
+  deploy configs/picom/picom.conf       "${HOME}/.config/picom/picom.conf"       nobackup
+  deploy configs/rofi/config.rasi       "${HOME}/.config/rofi/config.rasi"       nobackup
+  deploy configs/dunst/dunstrc          "${HOME}/.config/dunst/dunstrc"          nobackup
+  deploy configs/alacritty/alacritty.toml "${HOME}/.config/alacritty/alacritty.toml" nobackup
+  chmod +x "${HOME}/.config/qtile/autostart.sh" 2>/dev/null
+
+  # WaveTerm configs si présentes dans le repo
+  if [[ -d "${repo}/configs/waveterm" ]]; then
+    mkdir -p "${HOME}/.config/waveterm"
+    cp "${repo}/configs/waveterm/"*.json "${HOME}/.config/waveterm/" 2>/dev/null \
+      && printf "  \033[0;32m✓\033[0m  configs WaveTerm\n"
+  fi
+
+  # Police Mononoki NF (requise par la barre DTOS)
+  local fdir="${HOME}/.local/share/fonts/MononokiNerdFont"
+  if ! fc-list 2>/dev/null | grep -qi mononoki; then
+    mkdir -p "${fdir}"
+    curl -fLo /tmp/Mononoki.zip \
+      https://github.com/ryanoasis/nerd-fonts/releases/latest/download/Mononoki.zip 2>/dev/null \
+      && unzip -o /tmp/Mononoki.zip -d "${fdir}" >/dev/null 2>&1 \
+      && rm -f /tmp/Mononoki.zip && fc-cache -f >/dev/null 2>&1 \
+      && printf "  \033[0;32m✓\033[0m  Mononoki Nerd Font\n" \
+      || { printf "  \033[0;31m✗\033[0m  Mononoki NF échouée\n" >&2; fail=1; }
+  else
+    printf "  \033[0;32m✓\033[0m  Mononoki NF déjà présente\n"
+  fi
+
+  # Wallpapers DT
+  [[ -d "${HOME}/Pictures/wallpapers" ]] \
+    || git clone --depth 1 https://gitlab.com/dwt1/wallpapers.git \
+         "${HOME}/Pictures/wallpapers" >/dev/null 2>&1 \
+    && printf "  \033[0;32m✓\033[0m  Wallpapers DT\n" || true
+
+  # VALIDATION avec erreur réelle affichée
+  local verr
+  verr=$(python3 -c "
 import ast
-with open('${QTILE_DIR}/config.py') as f:
+with open('${HOME}/.config/qtile/config.py') as f:
     ast.parse(f.read())
-" 2>/dev/null; then
-  log_ok "config.py : syntaxe Python valide"
+print('VALID')" 2>&1)
+  if [[ "${verr}" == "VALID" ]]; then
+    printf "  \033[0;32m✓\033[0m  config.py : validé (ast.parse)\n"
+  else
+    printf "  \033[0;31m✗\033[0m  config.py INVALIDE :\n%s\n" "${verr}" >&2
+    fail=1
+  fi
+
+  return ${fail}
+}
+
+log_section "Déploiement des configs (user: ${TARGET_USER})"
+if [[ "${RUN_AS_ROOT}" == true ]]; then
+  # Exporter la fonction et l'exécuter en tant que user
+  export -f deploy_user_configs
+  su -s /bin/bash -c "HOME=${TARGET_HOME} deploy_user_configs '${REPO_DIR}'" "${TARGET_USER}" \
+    || die "Déploiement des configs ÉCHOUÉ — voir les ✗ ci-dessus. RIEN n'a été masqué."
 else
-  log_error "config.py : erreur de syntaxe"
+  deploy_user_configs "${REPO_DIR}" \
+    || die "Déploiement des configs ÉCHOUÉ — voir les ✗ ci-dessus."
 fi
 
-command -v qtile &>/dev/null \
-  && log_ok "qtile $(qtile --version 2>/dev/null | head -1)" \
-  || log_error "qtile introuvable"
+# Nettoyage du clone temporaire éventuel
+[[ "${REPO_DIR}" == /tmp/fedoraqtile-setup-* ]] && rm -rf "${REPO_DIR}"
 
 # ── Résumé ────────────────────────────────────────────────────────────────────
 echo ""
 printf "${GREEN}${BOLD}╔══════════════════════════════════════════════════════════╗\n"
-printf "║  Qtile (X11, style DTOS) installé ✓                      ║\n"
+printf "║  Qtile (X11, style DTOS) — DÉPLOIEMENT VÉRIFIÉ ✓         ║\n"
 printf "╠══════════════════════════════════════════════════════════╣\n"
 printf "║  sudo reboot → LightDM → session Qtile                   ║\n"
+printf "║  Wallpaper : nitrogen ~/Pictures/wallpapers (1re fois)   ║\n"
 printf "╠══════════════════════════════════════════════════════════╣\n"
-printf "║  Keybinds (clavier ch/fr, zéro AltGr) :                  ║\n"
-printf "║  Super+Enter      WaveTerm                               ║\n"
-printf "║  Super+Space      rofi (launcher)                        ║\n"
-printf "║  Super+B          Brave                                  ║\n"
-printf "║  Super+E          Thunar                                 ║\n"
-printf "║  Super+HJKL/↑↓←→  Focus                                  ║\n"
-printf "║  Super+Shift+…    Déplacer fenêtre                       ║\n"
-printf "║  Super+Ctrl+…     Redimensionner                         ║\n"
-printf "║  Super+1..9       Groupes (dev www sys doc …)            ║\n"
-printf "║  Super+N          Layout suivant (MonadTall→Max→Wide)    ║\n"
-printf "║  Super+Tab        Fenêtre suivante                       ║\n"
-printf "║  Super+F/M/T      Fullscreen / Maximize / Float          ║\n"
-printf "║  Super+Q          Fermer fenêtre                         ║\n"
-printf "║  Super+Ctrl+R     Restart qtile (recharge config)        ║\n"
-printf "║  Super+Alt+L      Lock (xsecurelock)                     ║\n"
-printf "║  Print            Screenshot (flameshot)                 ║\n"
+printf "║  Super+Enter WaveTerm · Super+Space rofi · Super+B Brave ║\n"
+printf "║  Super+1..9 groupes · Super+M/F/T max/full/float         ║\n"
+printf "║  Super+Ctrl+R restart · aide complète : README du repo   ║\n"
 printf "╚══════════════════════════════════════════════════════════╝${NC}\n"
 exit 0
