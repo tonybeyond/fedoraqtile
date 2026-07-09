@@ -45,7 +45,7 @@ fedoraqtile/
 
 ```bash
 # 1. Hash du mot de passe
-python3 -c "import crypt; print(crypt.crypt('tonpass', crypt.mksalt(crypt.METHOD_SHA512)))"
+echo "tonpass" | openssl passwd -6 -stdin
 # → remplacer dans kickstart/ks.cfg
 
 # 2. Booter l'ISO Fedora Everything avec le paramètre kernel :
